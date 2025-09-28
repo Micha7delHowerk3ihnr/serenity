@@ -50,6 +50,7 @@ const (
 type Subscription struct {
 	Name             string                                     `json:"name,omitempty"`
 	URL              string                                     `json:"url,omitempty"`
+	File             string                                     `json:"file,omitempty"`
 	UserAgent        string                                     `json:"user_agent,omitempty"`
 	UpdateInterval   badoption.Duration                         `json:"update_interval,omitempty"`
 	Process          badoption.Listable[OutboundProcessOptions] `json:"process,omitempty"`

@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/sagernet/serenity/common/cachefile"
@@ -45,6 +46,12 @@ func NewSubscriptionManager(ctx context.Context, logger logger.Logger, cacheFile
 		if subscription.Name == "" {
 			return nil, E.New("initialize subscription[", index, "]: missing name")
 		}
+		if subscription.URL != "" && subscription.File != "" {
+			return nil, E.New("initialize subscription[", subscription.Name, "]: both url and file are set")
+		}
+		if subscription.URL == "" && subscription.File == "" {
+			return nil, E.New("initialize subscription[", subscription.Name, "]: missing url or file")
+		}
 		var processes []*ProcessOptions
 		if interval == 0 || time.Duration(subscription.UpdateInterval) < interval {
 			interval = time.Duration(subscription.UpdateInterval)
@@ -77,6 +84,12 @@ func NewSubscriptionManager(ctx context.Context, logger logger.Logger, cacheFile
 
 func (m *Manager) Start() error {
 	for _, subscription := range m.subscriptions {
+		if subscription.File != "" {
+			if err := m.loadSubscriptionFromFile(subscription, false); err != nil {
+				m.logger.Error(E.Cause(err, "load subscription ", subscription.Name, " from file"))
+			}
+			continue
+		}
 		savedSubscription := m.cacheFile.LoadSubscription(m.ctx, subscription.Name)
 		if savedSubscription != nil {
 			subscription.rawServers = savedSubscription.Content
@@ -148,7 +161,37 @@ func (m *Manager) updateAll() {
 	}
 }
 
+func (m *Manager) loadSubscriptionFromFile(subscription *Subscription, onUpdate bool) error {
+	content, err := os.ReadFile(subscription.File)
+	if err != nil {
+		return err
+	}
+	rawServers, err := parser.ParseSubscription(m.ctx, string(content))
+	if err != nil {
+		return err
+	}
+	subscription.rawServers = rawServers
+	m.processSubscription(subscription, onUpdate)
+	subscription.LastEtag = ""
+	subscription.LastUpdated = time.Now()
+	err = m.cacheFile.StoreSubscription(m.ctx, subscription.Name, &cachefile.Subscription{
+		Content:     subscription.rawServers,
+		LastUpdated: subscription.LastUpdated,
+		LastEtag:    subscription.LastEtag,
+	})
+	if err != nil {
+		return err
+	}
+	if onUpdate {
+		m.logger.Info("updated subscription ", subscription.Name, ": ", len(subscription.rawServers), " servers (file)")
+	}
+	return nil
+}
+
 func (m *Manager) update(subscription *Subscription) error {
+	if subscription.File != "" {
+		return m.loadSubscriptionFromFile(subscription, true)
+	}
 	request, err := http.NewRequest("GET", subscription.URL, nil)
 	if err != nil {
 		return err

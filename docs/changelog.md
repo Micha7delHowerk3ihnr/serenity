@@ -2,6 +2,10 @@
 icon: material/alert-decagram
 ---
 
+#### Unreleased
+
+* Add support for loading subscription data from local files
+
 #### 1.1.0-beta.3
 
 * Rename `template.servers` to `template.dns_servers`

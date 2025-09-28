@@ -4,6 +4,7 @@
 {
   "name": "",
   "url": "",
+  "file": "",
   "user_agent": "",
   "process": [
     {
@@ -38,9 +39,15 @@ Name of the subscription, will be used in group tags.
 
 #### url
 
-==Required==
+==Required when `file` is not set==
 
 Subscription URL.
+
+#### file
+
+==Required when `url` is not set==
+
+Path to a local subscription file. `url` and `file` are mutually exclusive.
 
 #### user_agent
 
