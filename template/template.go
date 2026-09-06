@@ -5,6 +5,7 @@ import (
 	"regexp"
 
 	M "github.com/sagernet/serenity/common/metadata"
+	"github.com/sagernet/serenity/common/semver"
 	"github.com/sagernet/serenity/option"
 	"github.com/sagernet/serenity/subscription"
 	"github.com/sagernet/serenity/template/filter"
@@ -23,7 +24,6 @@ const (
 	DefaultDefaultTag = "default"
 	DefaultDirectTag  = "direct"
 	DefaultBlockTag   = "block"
-	DNSTag            = "dns"
 	DefaultURLTestTag = "URLTest"
 )
 
@@ -41,6 +41,12 @@ type ExtraGroup struct {
 }
 
 func (t *Template) Render(ctx context.Context, metadata M.Metadata, profileName string, outbounds [][]boxOption.Outbound, subscriptions []*subscription.Subscription) (*boxOption.Options, error) {
+	if metadata.Version != nil && metadata.Version.LessThan(semver.ParseVersion("1.14.0")) {
+		return nil, E.New("unsupported sing-box version ", metadata.Version, ", serenity now requires sing-box 1.14.0 or newer")
+	}
+	if t.DisableRuleAction {
+		return nil, E.New("disable_rule_action is not supported with sing-box 1.14+")
+	}
 	var options boxOption.Options
 	options.Log = t.Log
 	err := t.renderDNS(ctx, metadata, &options)

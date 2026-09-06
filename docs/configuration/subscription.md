@@ -53,7 +53,11 @@ Path to a local subscription file. `url` and `file` are mutually exclusive.
 
 User-Agent in HTTP request.
 
-`serenity/$version (sing-box $sing-box-version; Clash compatible)` is used by default.
+`serenity/$version (sing-box $sing-box-version)` is used by default.
+
+#### subscription format
+
+Only sing-box JSON subscriptions are accepted. Clash YAML, SIP008, base64 link lists, and individual proxy links are not supported.
 
 #### process
 

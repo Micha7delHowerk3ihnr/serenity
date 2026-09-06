@@ -7,21 +7,10 @@ import (
 	E "github.com/sagernet/sing/common/exceptions"
 )
 
-var subscriptionParsers = []func(ctx context.Context, content string) ([]option.Outbound, error){
-	ParseBoxSubscription,
-	ParseClashSubscription,
-	ParseSIP008Subscription,
-	ParseRawSubscription,
-}
-
 func ParseSubscription(ctx context.Context, content string) ([]option.Outbound, error) {
-	var pErr error
-	for _, parser := range subscriptionParsers {
-		servers, err := parser(ctx, content)
-		if len(servers) > 0 {
-			return servers, nil
-		}
-		pErr = E.Errors(pErr, err)
+	servers, err := ParseBoxSubscription(ctx, content)
+	if err != nil {
+		return nil, E.Cause(err, "parse sing-box subscription")
 	}
-	return nil, E.Cause(pErr, "no servers found")
+	return servers, nil
 }

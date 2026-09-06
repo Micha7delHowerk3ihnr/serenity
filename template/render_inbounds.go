@@ -8,7 +8,6 @@ import (
 	"github.com/sagernet/serenity/common/semver"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
-	"github.com/sagernet/sing-dns"
 	"github.com/sagernet/sing/common"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json/badjson"
@@ -17,15 +16,6 @@ import (
 
 func (t *Template) renderInbounds(metadata M.Metadata, options *option.Options) error {
 	options.Inbounds = t.Inbounds
-	var domainStrategy option.DomainStrategy
-	if !t.RemoteResolve {
-		if t.DomainStrategy != option.DomainStrategy(dns.DomainStrategyAsIS) {
-			domainStrategy = t.DomainStrategy
-		} else {
-			domainStrategy = option.DomainStrategy(dns.DomainStrategyPreferIPv4)
-		}
-	}
-	disableRuleAction := t.DisableRuleAction || (metadata.Version != nil && metadata.Version.LessThan(semver.ParseVersion("1.11.0-alpha.7")))
 	autoRedirect := t.AutoRedirect &&
 		!metadata.Platform.IsApple() &&
 		(metadata.Version == nil || metadata.Version.GreaterThanOrEqual(semver.ParseVersion("1.10.0-alpha.2")))
@@ -52,15 +42,6 @@ func (t *Template) renderInbounds(metadata M.Metadata, options *option.Options) 
 		}
 		if metadata.Platform == M.PlatformUnknown {
 			tunOptions.StrictRoute = true
-		}
-		if disableRuleAction {
-			//nolint:staticcheck
-			tunOptions.InboundOptions = option.InboundOptions{
-				SniffEnabled: !t.DisableSniff,
-			}
-			if t.EnableFakeIP {
-				tunOptions.DomainStrategy = domainStrategy
-			}
 		}
 		if !t.DisableSystemProxy && metadata.Platform != M.PlatformUnknown {
 			var httpPort uint16
@@ -96,13 +77,6 @@ func (t *Template) renderInbounds(metadata M.Metadata, options *option.Options) 
 				ListenPort: DefaultMixedPort,
 			},
 			SetSystemProxy: metadata.Platform == M.PlatformUnknown && disableTun && !t.DisableSystemProxy,
-		}
-		if disableRuleAction {
-			//nolint:staticcheck
-			mixedOptions.InboundOptions = option.InboundOptions{
-				SniffEnabled:   !t.DisableSniff,
-				DomainStrategy: domainStrategy,
-			}
 		}
 		mixedInbound := option.Inbound{
 			Type:    C.TypeMixed,

@@ -139,11 +139,11 @@ func expandInlineRule(ruleSet option.RuleSet, rule option.Rule) ([]option.Rule, 
 		rule.LogicalOptions.Rules = newRules
 		return []option.Rule{rule}, nil
 	}
-	if !common.Contains(rule.DefaultOptions.RuleSet, ruleSet.Tag) {
+	if !hasRuleSetTag(rule.DefaultOptions.RuleSet, ruleSet.Tag) {
 		return []option.Rule{rule}, nil
 	}
 	rule.DefaultOptions.RuleSet = common.Filter(rule.DefaultOptions.RuleSet, func(it string) bool {
-		return it != ruleSet.Tag
+		return !common.Contains([]string(ruleSet.Tag), it)
 	})
 	for i, hRule := range ruleSet.InlineOptions.Rules {
 		var (
@@ -179,11 +179,11 @@ func expandInlineDNSRule(ruleSet option.RuleSet, rule option.DNSRule) ([]option.
 		rule.LogicalOptions.Rules = newRules
 		return []option.DNSRule{rule}, nil
 	}
-	if !common.Contains(rule.DefaultOptions.RuleSet, ruleSet.Tag) {
+	if !hasRuleSetTag(rule.DefaultOptions.RuleSet, ruleSet.Tag) {
 		return []option.DNSRule{rule}, nil
 	}
 	rule.DefaultOptions.RuleSet = common.Filter(rule.DefaultOptions.RuleSet, func(it string) bool {
-		return it != ruleSet.Tag
+		return !common.Contains([]string(ruleSet.Tag), it)
 	})
 	for i, hRule := range ruleSet.InlineOptions.Rules {
 		var (
@@ -201,6 +201,15 @@ func expandInlineDNSRule(ruleSet option.RuleSet, rule option.DNSRule) ([]option.
 		newRules = append(newRules, newRule)
 	}
 	return newRules, nil
+}
+
+func hasRuleSetTag(ruleTags []string, tags []string) bool {
+	for _, tag := range tags {
+		if common.Contains(ruleTags, tag) {
+			return true
+		}
+	}
+	return false
 }
 
 func filter1100Rule(it option.Rule) bool {

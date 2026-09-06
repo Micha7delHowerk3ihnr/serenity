@@ -32,9 +32,7 @@ func (t *Template) renderExperimental(ctx context.Context, metadata M.Metadata, 
 				CacheID:     profileName,
 				StoreFakeIP: t.EnableFakeIP,
 			}
-			if !t.DisableDNSLeak && (metadata.Version == nil || metadata.Version.GreaterThanOrEqual(semver.ParseVersion("1.9.0-alpha.1"))) {
-				options.Experimental.CacheFile.StoreRDRC = true
-			}
+			options.Experimental.CacheFile.StoreDNS = !t.DisableDNSLeak
 		}
 	}
 

@@ -138,17 +138,31 @@ Default DNS server.
 
 `tls://8.8.8.8` is used by default.
 
+The legacy URI syntax is accepted by Serenity and converted internally to the sing-box 1.14 typed DNS server format.
+
 #### dns_local
 
 DNS server used for China DNS requests.
 
-`114.114.114.114` is used by default.
+`https://223.5.5.5/dns-query` is used by default.
+
+When the DNS server address is a domain name, Serenity automatically creates a `local_setup` bootstrap resolver.
 
 #### dns_servers
 
-List of [DNS Server](https://sing-box.sagernet.org/configuration/dns/server/).
+Additional [DNS Server](https://sing-box.sagernet.org/configuration/dns/server/).
 
-Will be append to DNS servers.
+Only the sing-box 1.14 typed DNS server format is accepted. Legacy `address` based DNS server definitions are no longer supported.
+
+Example:
+
+```json
+{
+  "type": "https",
+  "tag": "cloudflare",
+  "server": "1.1.1.1"
+}
+```
 
 #### enable_fakeip
 
@@ -168,7 +182,9 @@ No default traffic bypassing DNS rules will be generated if not empty.
 
 #### custom_fakeip
 
-Custom [FakeIP](https://sing-box.sagernet.org/configuration/dns/fakeip/) template.
+Custom [FakeIP](https://sing-box.sagernet.org/configuration/dns/server/fakeip/) template.
+
+FakeIP is implemented as a DNS server with `type: "fakeip"` since sing-box 1.12; the legacy `dns.fakeip` configuration was removed in sing-box 1.14.
 
 #### inbounds
 

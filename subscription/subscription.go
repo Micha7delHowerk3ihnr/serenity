@@ -199,7 +199,7 @@ func (m *Manager) update(subscription *Subscription) error {
 	if subscription.UserAgent != "" {
 		request.Header.Set("User-Agent", subscription.UserAgent)
 	} else {
-		request.Header.Set("User-Agent", F.ToString("serenity/", C.Version, " (sing-box ", C.CoreVersion(), "; Clash compatible)"))
+		request.Header.Set("User-Agent", F.ToString("serenity/", C.Version, " (sing-box ", C.CoreVersion(), ")"))
 	}
 	if subscription.LastEtag != "" {
 		request.Header.Set("If-None-Match", subscription.LastEtag)

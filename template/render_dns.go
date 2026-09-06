@@ -3,49 +3,30 @@ package template
 import (
 	"context"
 	"net/netip"
-	"net/url"
 
 	M "github.com/sagernet/serenity/common/metadata"
-	"github.com/sagernet/serenity/common/semver"
 	C "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
-	"github.com/sagernet/sing-dns"
 	"github.com/sagernet/sing/common"
+	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json/badoption"
-	BM "github.com/sagernet/sing/common/metadata"
 
 	mDNS "github.com/miekg/dns"
 )
 
-func (t *Template) renderDNS(ctx context.Context, metadata M.Metadata, options *option.Options) error {
-	var (
-		domainStrategy      option.DomainStrategy
-		domainStrategyLocal option.DomainStrategy
-	)
-	if t.DomainStrategy != option.DomainStrategy(dns.DomainStrategyAsIS) {
-		domainStrategy = t.DomainStrategy
-	} else if t.EnableFakeIP {
-		domainStrategy = option.DomainStrategy(dns.DomainStrategyPreferIPv4)
-	} else {
-		domainStrategy = option.DomainStrategy(dns.DomainStrategyUseIPv4)
-	}
-	if t.DomainStrategyLocal != option.DomainStrategy(dns.DomainStrategyAsIS) {
-		domainStrategyLocal = t.DomainStrategyLocal
-	} else {
-		domainStrategyLocal = option.DomainStrategy(dns.DomainStrategyPreferIPv4)
-	}
+func (t *Template) renderDNS(_ context.Context, metadata M.Metadata, options *option.Options) error {
+	domainStrategy := t.dnsStrategy()
+	domainStrategyLocal := t.localDNSStrategy()
 	if domainStrategyLocal == domainStrategy {
-		domainStrategyLocal = 0
+		domainStrategyLocal = option.DomainStrategy(C.DomainStrategyAsIS)
 	}
 	options.DNS = &option.DNSOptions{
 		RawDNSOptions: option.RawDNSOptions{
-			ReverseMapping: !t.DisableTrafficBypass && metadata.Platform != M.PlatformUnknown && !metadata.Platform.IsApple(),
-			DNSClientOptions: option.DNSClientOptions{
-				Strategy:         domainStrategy,
-				IndependentCache: t.EnableFakeIP,
-			},
+			ReverseMapping:   !t.DisableTrafficBypass && metadata.Platform != M.PlatformUnknown && !metadata.Platform.IsApple(),
+			DNSClientOptions: option.DNSClientOptions{Strategy: domainStrategy},
 		},
 	}
+
 	dnsDefault := t.DNS
 	if dnsDefault == "" {
 		dnsDefault = DefaultDNS
@@ -54,148 +35,65 @@ func (t *Template) renderDNS(ctx context.Context, metadata M.Metadata, options *
 	if dnsLocal == "" {
 		dnsLocal = DefaultDNSLocal
 	}
-	directTag := t.DirectTag
-	if directTag == "" {
-		directTag = DefaultDirectTag
-	}
 	defaultTag := t.DefaultTag
 	if defaultTag == "" {
 		defaultTag = DefaultDefaultTag
 	}
-	newDNSServers := metadata.Version != nil && metadata.Version.GreaterThanOrEqual(semver.ParseVersion("1.12.0-alpha.1"))
-	defaultDNSOptions := option.DNSServerOptions{
-		Tag: DNSDefaultTag,
-		Options: &option.LegacyDNSServerOptions{
-			Address: dnsDefault,
-		},
-	}
-	if dnsDefaultUrl, err := url.Parse(dnsDefault); err == nil && BM.IsDomainName(dnsDefaultUrl.Hostname()) {
-		defaultDNSOptions.Options.(*option.LegacyDNSServerOptions).AddressResolver = DNSLocalTag
-	}
-	if newDNSServers {
-		defaultDNSOptions.Options.(*option.LegacyDNSServerOptions).Detour = defaultTag
-		defaultDNSOptions.Upgrade(ctx)
+
+	defaultDNSOptions, _, err := buildDNSServer(dnsDefault, dnsServerBuildOptions{
+		Tag:              DNSDefaultTag,
+		Detour:           defaultTag,
+		DomainResolver:   DNSLocalTag,
+		ResolverStrategy: domainStrategyLocal,
+	})
+	if err != nil {
+		return E.Cause(err, "build default DNS server")
 	}
 	options.DNS.Servers = append(options.DNS.Servers, defaultDNSOptions)
-	var (
-		localDNSOptions  option.DNSServerOptions
-		localDNSIsDomain bool
-	)
+
+	localDNSAddress := dnsLocal
 	if t.DisableTrafficBypass {
-		localDNSOptions = option.DNSServerOptions{
-			Tag:  DNSLocalTag,
-			Type: C.DNSTypeLegacy,
-			Options: &option.LegacyDNSServerOptions{
-				Address:  "local",
-				Strategy: domainStrategyLocal,
-			},
-		}
-	} else {
-		localDNSOptions = option.DNSServerOptions{
-			Tag:  DNSLocalTag,
-			Type: C.DNSTypeLegacy,
-			Options: &option.LegacyDNSServerOptions{
-				Address:  dnsLocal,
-				Detour:   directTag,
-				Strategy: domainStrategyLocal,
-			},
-		}
-		if BM.IsDomainName(dnsLocal) {
-			localDNSIsDomain = true
-		} else if dnsLocalUrl, err := url.Parse(dnsLocal); err == nil {
-			switch dnsLocalUrl.Scheme {
-			case "tcp", "udp", "tls", "https", "quic", "h3":
-				localDNSIsDomain = true
-			}
-		}
-		if localDNSIsDomain {
-			defaultDNSOptions.Options.(*option.LegacyDNSServerOptions).AddressResolver = DNSLocalSetupTag
-		}
+		localDNSAddress = "local"
 	}
-	if newDNSServers {
-		localDNSOptions.Options.(*option.LegacyDNSServerOptions).Detour = ""
-		localDNSOptions.Upgrade(ctx)
+	localDNSOptions, localDNSIsDomain, err := buildDNSServer(localDNSAddress, dnsServerBuildOptions{
+		Tag:              DNSLocalTag,
+		DomainResolver:   DNSLocalSetupTag,
+		ResolverStrategy: domainStrategyLocal,
+	})
+	if err != nil {
+		return E.Cause(err, "build local DNS server")
 	}
 	options.DNS.Servers = append(options.DNS.Servers, localDNSOptions)
 	if localDNSIsDomain {
-		if newDNSServers {
-			options.DNS.Servers = append(options.DNS.Servers, option.DNSServerOptions{
-				Type:    C.DNSTypeLocal,
-				Tag:     DNSLocalSetupTag,
-				Options: &option.LocalDNSServerOptions{},
-			})
-		} else {
-			options.DNS.Servers = append(options.DNS.Servers, option.DNSServerOptions{
-				Type: C.DNSTypeLegacy,
-				Tag:  DNSLocalSetupTag,
-				Options: &option.LegacyDNSServerOptions{
-					Address:  "local",
-					Strategy: domainStrategyLocal,
-				},
-			})
-		}
+		options.DNS.Servers = append(options.DNS.Servers, option.DNSServerOptions{
+			Type:    C.DNSTypeLocal,
+			Tag:     DNSLocalSetupTag,
+			Options: &option.LocalDNSServerOptions{},
+		})
 	}
+
 	if t.EnableFakeIP {
-		if newDNSServers {
-			var inet4Range, inet6Range *badoption.Prefix
-			if t.CustomFakeIP != nil {
-				inet4Range = t.CustomFakeIP.Inet4Range
-				inet6Range = t.CustomFakeIP.Inet6Range
-			} else {
-				inet4Range = (*badoption.Prefix)(common.Ptr(netip.MustParsePrefix("198.18.0.0/15")))
+		var inet4Range, inet6Range *badoption.Prefix
+		if t.CustomFakeIP != nil {
+			inet4Range = t.CustomFakeIP.Inet4Range
+			inet6Range = t.CustomFakeIP.Inet6Range
+		} else {
+			inet4Range = (*badoption.Prefix)(common.Ptr(netip.MustParsePrefix("198.18.0.0/15")))
+			if !t.DisableIPv6() {
 				inet6Range = (*badoption.Prefix)(common.Ptr(netip.MustParsePrefix("fc00::/18")))
 			}
-			options.DNS.Servers = append(options.DNS.Servers, option.DNSServerOptions{
-				Tag:  DNSFakeIPTag,
-				Type: C.DNSTypeFakeIP,
-				Options: &option.FakeIPDNSServerOptions{
-					Inet4Range: inet4Range,
-					Inet6Range: inet6Range,
-				},
-			})
-		} else {
-			if t.CustomFakeIP != nil {
-				options.DNS.FakeIP = &option.LegacyDNSFakeIPOptions{
-					Inet4Range: t.CustomFakeIP.Inet4Range,
-					Inet6Range: t.CustomFakeIP.Inet6Range,
-				}
-			} else if options.DNS.FakeIP == nil {
-				options.DNS.FakeIP = &option.LegacyDNSFakeIPOptions{}
-			}
-			options.DNS.FakeIP.Enabled = true
-			if options.DNS.FakeIP.Inet4Range == nil || !options.DNS.FakeIP.Inet4Range.Build(netip.Prefix{}).IsValid() {
-				options.DNS.FakeIP.Inet4Range = (*badoption.Prefix)(common.Ptr(netip.MustParsePrefix("198.18.0.0/15")))
-			}
-			if !t.DisableIPv6() && options.DNS.FakeIP.Inet6Range == nil || !options.DNS.FakeIP.Inet6Range.Build(netip.Prefix{}).IsValid() {
-				options.DNS.FakeIP.Inet6Range = (*badoption.Prefix)(common.Ptr(netip.MustParsePrefix("fc00::/18")))
-			}
-			options.DNS.Servers = append(options.DNS.Servers, option.DNSServerOptions{
-				Tag: DNSFakeIPTag,
-				Options: &option.LegacyDNSServerOptions{
-					Address: "fakeip",
-				},
-			})
 		}
+		options.DNS.Servers = append(options.DNS.Servers, option.DNSServerOptions{
+			Tag:  DNSFakeIPTag,
+			Type: C.DNSTypeFakeIP,
+			Options: &option.FakeIPDNSServerOptions{
+				Inet4Range: inet4Range,
+				Inet6Range: inet6Range,
+			},
+		})
 	}
 	options.DNS.Servers = append(options.DNS.Servers, t.DNSServers...)
-	if !newDNSServers {
-		options.DNS.Rules = []option.DNSRule{
-			{
-				Type: C.RuleTypeDefault,
-				DefaultOptions: option.DefaultDNSRule{
-					RawDefaultDNSRule: option.RawDefaultDNSRule{
-						Outbound: []string{"any"},
-					},
-					DNSRuleAction: option.DNSRuleAction{
-						Action: C.RuleActionTypeRoute,
-						RouteOptions: option.DNSRouteActionOptions{
-							Server: DNSLocalTag,
-						},
-					},
-				},
-			},
-		}
-	}
+
 	clashModeRule := t.ClashModeRule
 	if clashModeRule == "" {
 		clashModeRule = "Rule"
@@ -208,123 +106,92 @@ func (t *Template) renderDNS(ctx context.Context, metadata M.Metadata, options *
 	if clashModeDirect == "" {
 		clashModeDirect = "Direct"
 	}
-
 	if !t.DisableClashMode {
-		options.DNS.Rules = append(options.DNS.Rules, option.DNSRule{
-			Type: C.RuleTypeDefault,
-			DefaultOptions: option.DefaultDNSRule{
-				RawDefaultDNSRule: option.RawDefaultDNSRule{
-					ClashMode: clashModeGlobal,
-				},
-				DNSRuleAction: option.DNSRuleAction{
-					Action: C.RuleActionTypeRoute,
-					RouteOptions: option.DNSRouteActionOptions{
-						Server: DNSDefaultTag,
-					},
-				},
-			},
-		}, option.DNSRule{
-			Type: C.RuleTypeDefault,
-			DefaultOptions: option.DefaultDNSRule{
-				RawDefaultDNSRule: option.RawDefaultDNSRule{
-					ClashMode: clashModeDirect,
-				},
-				DNSRuleAction: option.DNSRuleAction{
-					Action: C.RuleActionTypeRoute,
-					RouteOptions: option.DNSRouteActionOptions{
-						Server: DNSLocalTag,
-					},
-				},
-			},
-		})
+		options.DNS.Rules = append(options.DNS.Rules,
+			dnsRouteRule(option.RawDefaultDNSRule{ClashMode: clashModeGlobal}, DNSDefaultTag),
+			dnsRouteRule(option.RawDefaultDNSRule{ClashMode: clashModeDirect}, DNSLocalTag),
+		)
 	}
 	options.DNS.Rules = append(options.DNS.Rules, t.PreDNSRules...)
 	if len(t.CustomDNSRules) == 0 {
 		if !t.DisableTrafficBypass {
-			options.DNS.Rules = append(options.DNS.Rules, option.DNSRule{
-				Type: C.RuleTypeDefault,
-				DefaultOptions: option.DefaultDNSRule{
-					RawDefaultDNSRule: option.RawDefaultDNSRule{
-						RuleSet: []string{"geosite-geolocation-cn"},
-					},
-					DNSRuleAction: option.DNSRuleAction{
-						Action: C.RuleActionTypeRoute,
-						RouteOptions: option.DNSRouteActionOptions{
-							Server: DNSLocalTag,
-						},
-					},
-				},
-			})
-			if !t.DisableDNSLeak && (metadata.Version == nil || metadata.Version.GreaterThanOrEqual(semver.ParseVersion("1.9.0-alpha.1"))) {
-				options.DNS.Rules = append(options.DNS.Rules, option.DNSRule{
-					Type: C.RuleTypeDefault,
-					DefaultOptions: option.DefaultDNSRule{
-						RawDefaultDNSRule: option.RawDefaultDNSRule{
-							ClashMode: clashModeRule,
-						},
-						DNSRuleAction: option.DNSRuleAction{
-							Action: C.RuleActionTypeRoute,
-							RouteOptions: option.DNSRouteActionOptions{
-								Server: DNSDefaultTag,
-							},
-						},
-					},
-				}, option.DNSRule{
-					Type: C.RuleTypeLogical,
-					LogicalOptions: option.LogicalDNSRule{
-						RawLogicalDNSRule: option.RawLogicalDNSRule{
-							Mode: C.LogicalTypeAnd,
-							Rules: []option.DNSRule{
-								{
-									Type: C.RuleTypeDefault,
-									DefaultOptions: option.DefaultDNSRule{
-										RawDefaultDNSRule: option.RawDefaultDNSRule{
-											RuleSet: []string{"geoip-cn"},
-										},
-									},
-								},
-								{
-									Type: C.RuleTypeDefault,
-									DefaultOptions: option.DefaultDNSRule{
-										RawDefaultDNSRule: option.RawDefaultDNSRule{
-											RuleSet: []string{"geosite-geolocation-!cn"},
-											Invert:  true,
-										},
-									},
-								},
-							},
-						},
-						DNSRuleAction: option.DNSRuleAction{
-							Action: C.RuleActionTypeRoute,
-							RouteOptions: option.DNSRouteActionOptions{
-								Server: DNSLocalTag,
-							},
-						},
-					},
-				})
+			options.DNS.Rules = append(options.DNS.Rules,
+				dnsRouteRule(option.RawDefaultDNSRule{RuleSet: []string{"geosite-geolocation-cn"}}, DNSLocalTag),
+			)
+			if !t.DisableDNSLeak {
+				options.DNS.Rules = append(options.DNS.Rules,
+					dnsRouteRule(option.RawDefaultDNSRule{ClashMode: clashModeRule}, DNSDefaultTag),
+					dnsEvaluateRule(),
+					dnsGeoIPCNRule(),
+				)
 			}
 		}
 	} else {
 		options.DNS.Rules = append(options.DNS.Rules, t.CustomDNSRules...)
 	}
 	if t.EnableFakeIP {
-		options.DNS.Rules = append(options.DNS.Rules, option.DNSRule{
-			Type: C.RuleTypeDefault,
-			DefaultOptions: option.DefaultDNSRule{
-				RawDefaultDNSRule: option.RawDefaultDNSRule{
-					QueryType: []option.DNSQueryType{
-						option.DNSQueryType(mDNS.TypeA),
-						option.DNSQueryType(mDNS.TypeAAAA),
+		options.DNS.Rules = append(options.DNS.Rules, dnsRouteRule(option.RawDefaultDNSRule{
+			QueryType: []option.DNSQueryType{option.DNSQueryType(mDNS.TypeA), option.DNSQueryType(mDNS.TypeAAAA)},
+		}, DNSFakeIPTag))
+	}
+	return nil
+}
+
+func dnsRouteRule(rule option.RawDefaultDNSRule, server string) option.DNSRule {
+	return option.DNSRule{
+		Type: C.RuleTypeDefault,
+		DefaultOptions: option.DefaultDNSRule{
+			RawDefaultDNSRule: rule,
+			DNSRuleAction: option.DNSRuleAction{
+				Action:       C.RuleActionTypeRoute,
+				RouteOptions: option.DNSRouteActionOptions{Server: server},
+			},
+		},
+	}
+}
+
+func dnsEvaluateRule() option.DNSRule {
+	return option.DNSRule{
+		Type: C.RuleTypeDefault,
+		DefaultOptions: option.DefaultDNSRule{
+			RawDefaultDNSRule: option.RawDefaultDNSRule{
+				QueryType: []option.DNSQueryType{option.DNSQueryType(mDNS.TypeA), option.DNSQueryType(mDNS.TypeAAAA)},
+			},
+			DNSRuleAction: option.DNSRuleAction{
+				Action:          C.RuleActionTypeEvaluate,
+				EvaluateOptions: option.DNSEvaluateActionOptions{Server: DNSDefaultTag},
+			},
+		},
+	}
+}
+
+func dnsGeoIPCNRule() option.DNSRule {
+	return option.DNSRule{
+		Type: C.RuleTypeLogical,
+		LogicalOptions: option.LogicalDNSRule{
+			RawLogicalDNSRule: option.RawLogicalDNSRule{
+				Mode: C.LogicalTypeAnd,
+				Rules: []option.DNSRule{
+					{
+						Type: C.RuleTypeDefault,
+						DefaultOptions: option.DefaultDNSRule{RawDefaultDNSRule: option.RawDefaultDNSRule{
+							RuleSet:       []string{"geoip-cn"},
+							MatchResponse: &option.DNSRuleMatchResponse{Enabled: true},
+						}},
 					},
-				},
-				DNSRuleAction: option.DNSRuleAction{
-					Action: C.RuleActionTypeRoute,
-					RouteOptions: option.DNSRouteActionOptions{
-						Server: DNSFakeIPTag,
+					{
+						Type: C.RuleTypeDefault,
+						DefaultOptions: option.DefaultDNSRule{RawDefaultDNSRule: option.RawDefaultDNSRule{
+							RuleSet: []string{"geosite-geolocation-!cn"},
+							Invert:  true,
+						}},
 					},
 				},
 			},
-		})
+			DNSRuleAction: option.DNSRuleAction{
+				Action:       C.RuleActionTypeRoute,
+				RouteOptions: option.DNSRouteActionOptions{Server: DNSLocalTag},
+			},
+		},
 	}
-	return nil
 }

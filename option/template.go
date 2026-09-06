@@ -4,8 +4,8 @@ import (
 	"context"
 
 	C "github.com/sagernet/serenity/constant"
+	boxConstant "github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
-	"github.com/sagernet/sing-dns"
 	"github.com/sagernet/sing/common/byteformats"
 	E "github.com/sagernet/sing/common/exceptions"
 	"github.com/sagernet/sing/common/json"
@@ -132,7 +132,8 @@ type GitHubRuleSetOptions struct {
 }
 
 func (t Template) DisableIPv6() bool {
-	return t.DomainStrategy == option.DomainStrategy(dns.DomainStrategyUseIPv4) && t.DomainStrategyLocal == option.DomainStrategy(dns.DomainStrategyUseIPv4)
+	return t.DomainStrategy == option.DomainStrategy(boxConstant.DomainStrategyIPv4Only) &&
+		t.DomainStrategyLocal == option.DomainStrategy(boxConstant.DomainStrategyIPv4Only)
 }
 
 type ExtraGroup struct {

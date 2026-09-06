@@ -2,30 +2,18 @@ package subscription
 
 import (
 	"context"
+	"net"
 	"net/netip"
 	"sync"
 
-	"github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
-	dns "github.com/sagernet/sing-dns"
-	"github.com/sagernet/sing/common"
-	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/common/task"
 )
 
 func Deduplication(ctx context.Context, servers []option.Outbound) []option.Outbound {
 	resolveCtx := &resolveContext{
-		ctx: ctx,
-		dnsClient: dns.NewClient(dns.ClientOptions{
-			DisableExpire: true,
-			Logger:        log.NewNOPFactory().Logger(),
-		}),
-		dnsTransport: common.Must1(dns.NewTLSTransport(dns.TransportOptions{
-			Context:      ctx,
-			Dialer:       N.SystemDialer,
-			Address:      "tls://1.1.1.1",
-			ClientSubnet: netip.MustParsePrefix("114.114.114.114/24"),
-		})),
+		ctx:      ctx,
+		resolver: net.DefaultResolver,
 	}
 
 	uniqueServers := make([]netip.AddrPort, len(servers))
@@ -64,9 +52,8 @@ func Deduplication(ctx context.Context, servers []option.Outbound) []option.Outb
 }
 
 type resolveContext struct {
-	ctx          context.Context
-	dnsClient    *dns.Client
-	dnsTransport dns.Transport
+	ctx      context.Context
+	resolver *net.Resolver
 }
 
 func resolveDestination(ctx *resolveContext, server option.Outbound) netip.AddrPort {
@@ -79,9 +66,7 @@ func resolveDestination(ctx *resolveContext, server option.Outbound) netip.AddrP
 		return serverOptions.AddrPort()
 	}
 	if serverOptions.IsFqdn() {
-		addresses, lookupErr := ctx.dnsClient.Lookup(ctx.ctx, ctx.dnsTransport, serverOptions.Fqdn, dns.QueryOptions{
-			Strategy: dns.DomainStrategyPreferIPv4,
-		})
+		addresses, lookupErr := ctx.resolver.LookupNetIP(ctx.ctx, "ip", serverOptions.Fqdn)
 		if lookupErr == nil && len(addresses) > 0 {
 			return netip.AddrPortFrom(addresses[0], serverOptions.Port)
 		}
